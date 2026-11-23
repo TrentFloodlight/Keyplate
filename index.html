@@ -329,7 +329,7 @@ const DEFAULTS={
   markers:{on:true,style:'cross',layout:'4',size:28,inset:8,contrast:32},
   dim:0,
   steps:[{...defStep('tap'),x:.5,y:.36,countdown:3},defStep('slider'),{...defStep('tap'),x:.72,y:.84}],
-  failsafe:60,abort:{corner:'tr',hold:2},flash:{on:true,color:'white'},grid:{snap:true,size:16},locked:false,fps:25,bar:'bottom'
+  failsafe:60,abort:{corner:'bl',hold:2},flash:{on:true,color:'white'},grid:{snap:true,size:16},locked:false,fps:25,bar:'bottom',v:2
 };
 
 /* ---------- storage ---------- */
@@ -345,7 +345,20 @@ function merge(d,s){
   }return o;
 }
 function normalise(st){st.steps=(Array.isArray(st.steps)?st.steps:[]).filter(x=>x&&TYPES[x.type]).map(x=>({...defStep(x.type),...x}));return st}
-let S=normalise(merge(DEFAULTS,LS.get('kp.state',null)));
+/* v2: abort corner moved off the top-right (Control Center swipe) */
+function migrate(s){if(s&&typeof s==='object'&&!s.v){if(s.abort&&s.abort.corner==='tr')s.abort.corner='bl';s.v=2}return s}
+let S=normalise(merge(DEFAULTS,migrate(LS.get('kp.state',null))));
+/* safe areas (status bar, home indicator) so markers and the abort zone stay clear of them */
+const probe=document.createElement('div');
+probe.style.cssText='position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)';
+document.body.appendChild(probe);
+let insetCache=null;
+addEventListener('resize',()=>insetCache=null);
+function insets(W,H){
+  if(Math.abs(W-innerWidth)>2||Math.abs(H-innerHeight)>2)return{t:59,r:0,b:34,l:0};
+  if(!insetCache){const c=getComputedStyle(probe);insetCache={t:parseFloat(c.paddingTop)||0,r:parseFloat(c.paddingRight)||0,b:parseFloat(c.paddingBottom)||0,l:parseFloat(c.paddingLeft)||0}}
+  return insetCache;
+}
 let IMG=null, imgVer=0;
 let saveT;
 function save(){clearTimeout(saveT);saveT=setTimeout(()=>LS.set('kp.state',S),250)}
@@ -398,7 +411,8 @@ const fmtS=n=>(Math.round(n*10)/10)+'s';
 function txt(x,y,s,col,size,w=600){return`<text x="${f2(x)}" y="${f2(y)}" fill="${col}" font-size="${f2(size)}" font-family="${FONT}" font-weight="${w}" text-anchor="middle" dominant-baseline="central">${s}</text>`}
 function arc(cx,cy,R,frac,col,w){const C=2*Math.PI*R;return`<circle cx="${f2(cx)}" cy="${f2(cy)}" r="${f2(R)}" fill="none" stroke="${col}" stroke-width="${w}" stroke-linecap="round" stroke-dasharray="${f2(C*clamp(frac,0,1))} ${f2(C)}" transform="rotate(-90 ${f2(cx)} ${f2(cy)})"/>`}
 function markerPts(W,H){
-  const m=S.markers.inset/100*Math.min(W,H),xs=[m,W/2,W-m],ys=[m,H/2,H-m],pts=[],lay=String(S.markers.layout);
+  const I=insets(W,H),m=S.markers.inset/100*Math.min(W,H),x0=I.l+m,x1=W-I.r-m,y0=I.t+m,y1=H-I.b-m;
+  const xs=[x0,(x0+x1)/2,x1],ys=[y0,(y0+y1)/2,y1],pts=[],lay=String(S.markers.layout);
   for(let r=0;r<3;r++)for(let c=0;c<3;c++){
     const corner=r!==1&&c!==1,center=r===1&&c===1;
     if(lay==='4'&&!corner)continue;
@@ -415,7 +429,7 @@ function markersSVG(W,H){
     else o+=`<path d="M${f2(p.x-z/2)} ${f2(p.y)}H${f2(p.x+z/2)}M${f2(p.x)} ${f2(p.y-z/2)}V${f2(p.y+z/2)}" stroke="${col}" stroke-width="${f2(w)}" fill="none"/>`;
   }return o;
 }
-function abortRect(W,H){const z=84,c=S.abort.corner;return{x:c[1]==='l'?0:W-z,y:c[0]==='t'?0:H-z,z}}
+function abortRect(W,H){const I=insets(W,H),z=84,c=S.abort.corner;return{x:c[1]==='l'?I.l:W-I.r-z,y:c[0]==='t'?I.t:H-I.b-z,z}}
 function arrowHead(x2,y2,ang,len,col,kind){
   const a1=ang+Math.PI*0.82,a2=ang-Math.PI*0.82;
   if(kind==='scroll'){
@@ -491,6 +505,9 @@ function widgetsSVG(W,H,o){
   out+=markersSVG(W,H);
   if(o.mode==='place'){
     if(S.grid.snap){let gl='';const g=S.grid.size*2;for(let x=g;x<W;x+=g)gl+=`M${x} 0V${f2(H)}`;for(let y=g;y<H;y+=g)gl+=`M0 ${y}H${f2(W)}`;out+=`<path d="${gl}" stroke="#FFFFFF" stroke-opacity=".12" stroke-width="1"/>`}
+    const I=insets(W,H);
+    if(I.t>0)out+=`<rect x="0" y="0" width="${f2(W)}" height="${f2(I.t)}" fill="#000000" fill-opacity=".3"/>`+txt(W/2,I.t/2,'status bar','#FFFFFF',11,500);
+    if(I.b>0)out+=`<rect x="0" y="${f2(H-I.b)}" width="${f2(W)}" height="${f2(I.b)}" fill="#000000" fill-opacity=".3"/>`+txt(W/2,H-I.b/2,'home bar','#FFFFFF',11,500);
     const a=abortRect(W,H);out+=`<rect x="${a.x+3}" y="${a.y+3}" width="${a.z-6}" height="${a.z-6}" rx="10" fill="#FF5B4F" fill-opacity=".14" stroke="#FF5B4F" stroke-width="1.5" stroke-dasharray="5 4"/>`+txt(a.x+a.z/2,a.y+a.z/2,'abort',"#FF5B4F",12);
   }
   S.steps.forEach((st,i)=>{
@@ -616,7 +633,7 @@ $('#saveSetup').onclick=async()=>{
 };
 $('#setups').addEventListener('click',async e=>{
   const l=e.target.closest('[data-load]'),r=e.target.closest('[data-rm]'),all=LS.get('kp.setups',{});
-  if(l){const n=l.dataset.load,s=all[n];if(!s)return;const take=S.take;S=normalise(merge(DEFAULTS,s));S.take=take;
+  if(l){const n=l.dataset.load,s=all[n];if(!s)return;const take=S.take;S=normalise(merge(DEFAULTS,migrate(JSON.parse(JSON.stringify(s)))));S.take=take;
     const d=s.hasImage?await idb.get('img:setup:'+n):null;IMG=d?await loadImg(d).catch(()=>null):null;imgVer++;idb.set('img:current',IMG?IMG.src:null);
     changed(true);renderAll();toast(`Loaded “${n}”`)}
   if(r){const n=r.dataset.rm;delete all[n];LS.set('kp.setups',all);idb.set('img:setup:'+n,null);renderSetups()}
