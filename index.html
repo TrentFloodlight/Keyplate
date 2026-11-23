@@ -7,6 +7,8 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Keyplate">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
 <meta name="theme-color" content="#0D1113">
 <style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
 <title>Keyplate</title>
@@ -256,7 +258,7 @@ input[type=text],input[type=number],select{background:var(--panel);border:1px so
     <div class="row"><span class="rl">Log frame rate</span><div class="seg" data-seg="fps"><button type="button" data-v="23.976">23.976</button><button type="button" data-v="24">24</button><button type="button" data-v="25">25</button><button type="button" data-v="29.97">29.97</button><button type="button" data-v="30">30</button><button type="button" data-v="50">50</button><button type="button" data-v="60">60</button></div></div>
     <div class="row"><span class="rl">Snap to grid</span><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><label class="switch"><input type="checkbox" data-bind="grid.snap" aria-label="Snap to grid"></label><div class="seg" data-seg="grid.size" style="flex:1"><button type="button" data-v="8">8 px</button><button type="button" data-v="16">16 px</button><button type="button" data-v="32">32 px</button></div></div></div>
     <div class="row"><span class="rl">Lock positions</span><label class="switch"><input type="checkbox" data-bind="locked" aria-label="Lock widget positions"></label></div>
-    <p class="hint">Notifications and the Home gesture can only be blocked by iOS itself. Turn on Focus / Do Not Disturb, and use Guided Access (Settings › Accessibility) for a full lock: triple-click the side button once Keyplate is open.</p>
+    <p class="hint" id="lockHint">Notifications and the Home gesture can only be blocked by iOS itself. Turn on Focus / Do Not Disturb, and use Guided Access (Settings › Accessibility) for a full lock: triple-click the side button once Keyplate is open.</p>
   </section>
 
   <section class="sec">
@@ -657,7 +659,31 @@ async function saveRecord(r){
 const stage=$('#stage'),sCan=$('#stageCanvas'),sSvg=$('#stageSvg');
 let mode=null,sel=0,drag=null,wake=null;
 const SW=()=>stage.clientWidth,SH=()=>stage.clientHeight;
+/* full screen: Android, iPad and desktop browsers allow it from a tap; iPhone Safari ignores it (use the Home Screen icon there) */
+const fsEl=()=>document.fullscreenElement||document.webkitFullscreenElement;
+let fsByUs=false;
+function goFull(){
+  if(matchMedia('(display-mode: fullscreen)').matches)return;
+  const el=document.documentElement;
+  const lockPortrait=()=>{try{screen.orientation&&screen.orientation.lock&&screen.orientation.lock('portrait').catch(()=>{})}catch(e){}};
+  if(fsEl()){lockPortrait();return}
+  try{
+    let p=null;
+    if(el.requestFullscreen)p=el.requestFullscreen({navigationUI:'hide'});
+    else if(el.webkitRequestFullscreen)el.webkitRequestFullscreen();
+    else return;
+    fsByUs=true;
+    Promise.resolve(p).then(lockPortrait).catch(()=>{fsByUs=false});
+  }catch(e){fsByUs=false}
+}
+function exitFull(){
+  if(!fsByUs||!fsEl())return;fsByUs=false;
+  try{screen.orientation&&screen.orientation.unlock&&screen.orientation.unlock()}catch(e){}
+  try{(document.exitFullscreen?document.exitFullscreen():document.webkitExitFullscreen&&document.webkitExitFullscreen())?.catch?.(()=>{})}catch(e){}
+}
+['fullscreenchange','webkitfullscreenchange'].forEach(t=>document.addEventListener(t,()=>{if(!fsEl())fsByUs=false;if(mode)setTimeout(sizeStage,60)}));
 function openStage(m){
+  goFull();
   mode=m;stage.hidden=false;document.documentElement.classList.add('locked');
   $('#ptool').hidden=m!=='place';$('#sheet').hidden=true;
   $('#modePill').textContent=m==='place'?'Placing':m==='take'?'Take':'Rehearsal';
@@ -671,7 +697,7 @@ function sizeStage(){
 }
 function closeStage(){
   mode=null;run=null;drag=null;stage.hidden=true;document.documentElement.classList.remove('locked');
-  $('#modePill').textContent='Setup';releaseWake();renderAll();
+  $('#modePill').textContent='Setup';releaseWake();exitFull();renderAll();
 }
 function renderStage(){
   if(!mode)return;
@@ -862,6 +888,9 @@ $('#btnTake').onclick=()=>startRun('take');
 
 /* ---------- boot ---------- */
 const standalone=navigator.standalone===true||matchMedia('(display-mode: standalone)').matches||matchMedia('(display-mode: fullscreen)').matches;
+const isIOS=/iP(hone|od|ad)/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+if(!isIOS&&/Android/i.test(navigator.userAgent))$('#lockHint').textContent='Notifications and the Back and Home gestures can only be blocked by Android itself. Turn on Do Not Disturb, and use App pinning (Settings › Security, search "pin") for a full lock.';
+if(!isIOS)$('#fsTip').innerHTML='<b>Full screen</b> turns on by itself when you tap Place, Rehearse or Start take. To keep Keyplate as an app, open the browser menu (⋮) and choose <b>Install app</b> or <b>Add to Home screen</b>.';
 $('#fsTip').hidden=standalone||!('ontouchstart' in window);
 (function icon(){try{const c=document.createElement('canvas');c.width=c.height=180;const x=c.getContext('2d');x.fillStyle='#0D1113';x.fillRect(0,0,180,180);x.fillStyle='#E7ECEA';x.beginPath();x.roundRect(56,22,68,136,14);x.fill();x.fillStyle='#00B140';x.beginPath();x.roundRect(62,30,56,120,8);x.fill();x.strokeStyle='#5FD08A';x.lineWidth=4;[[70,38],[110,38],[70,142],[110,142]].forEach(([a,b])=>{x.beginPath();x.moveTo(a-7,b);x.lineTo(a+7,b);x.moveTo(a,b-7);x.lineTo(a,b+7);x.stroke()});x.fillStyle='#F2BE22';x.beginPath();x.arc(90,92,13,0,Math.PI*2);x.fill();const l=document.createElement('link');l.rel='apple-touch-icon';l.href=c.toDataURL('image/png');document.head.appendChild(l)}catch(e){}})();
 renderAll();
